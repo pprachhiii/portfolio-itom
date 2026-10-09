@@ -23,7 +23,9 @@ const EntranceDoors = ({
     position = [0, 0, 22],
     onComplete,
     corridorHeight = 8, // Taller wall
-    corridorWidth = 15 // Wider wall
+    corridorWidth = 15, // Wider wall
+    autoOpen = true,
+    autoOpenDelay = 1000
 }) => {
     const leftDoorRef = useRef();
     const rightDoorRef = useRef();
@@ -55,12 +57,12 @@ const EntranceDoors = ({
     const dummyTex = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
     const frameTexture = useTexture('/textures/doors/frame_sketch.webp');
-    const doorLeftTexture = useTexture('/textures/doors/door_left_sketch.webp');
-    const doorRightTexture = useTexture('/textures/doors/door_right_sketch.webp');
+    const doorLeftTexture = useTexture('/textures/doors/door_left_sketch.png');
+    const doorRightTexture = useTexture('/textures/doors/door_right_sketch.png');
 
     // Mobile optimization: Don't load painted textures or handles on phones
-    const doorRightPaintedTexture = useTexture(isMobileDevice ? dummyTex : '/textures/doors/door_right_painted.webp');
-    const doorLeftPaintedTexture = useTexture(isMobileDevice ? dummyTex : '/textures/doors/door_left_painted.webp');
+    const doorRightPaintedTexture = useTexture(isMobileDevice ? dummyTex : '/textures/doors/door_right_painted.png');
+    const doorLeftPaintedTexture = useTexture(isMobileDevice ? dummyTex : '/textures/doors/door_left_painted.png');
     const handleLeftTexture = useTexture('/textures/doors/handle_left_sketch.webp');
     const handleLeftPaintedTexture = useTexture(isMobileDevice ? dummyTex : '/textures/doors/handle_left_painted.webp');
     const handleRightTexture = useTexture('/textures/doors/handle_right_sketch.webp');
@@ -306,6 +308,20 @@ const EntranceDoors = ({
             ease: 'power2.inOut'
         }, 0.3);
     };
+
+    // Automatically open the entrance shortly after it mounts.
+    // The doors remain clickable as a fallback, and state guards prevent
+    // a duplicate animation if the user clicks before the timer fires.
+    useEffect(() => {
+        if (!autoOpen || isOpen || isAnimating) return undefined;
+
+        const autoOpenTimer = window.setTimeout(() => {
+            if (isOpen || isAnimating) return;
+            handleClick({ stopPropagation: () => {}, isAutoOpen: true });
+        }, Math.max(0, autoOpenDelay));
+
+        return () => window.clearTimeout(autoOpenTimer);
+    }, [autoOpen, autoOpenDelay, isOpen, isAnimating]);
 
     // Handle hover - doors slightly open to indicate interactivity
     const handlePointerEnter = () => {

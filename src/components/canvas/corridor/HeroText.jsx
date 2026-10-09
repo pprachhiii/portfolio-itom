@@ -55,12 +55,14 @@ const HeroText = ({ position = [0, 0.3, 0] }) => {
     const worldPosVec = useRef(new THREE.Vector3());
 
     // Letter positions for ITOM split effect
-    const letters = useMemo(() => [
-        { char: 'I', baseX: -0.95, splitDir: -1.6, delay: 0 },
-        { char: 'T', baseX: -0.43, splitDir: -0.6, delay: 0 },
-        { char: 'O', baseX: 0.23, splitDir: 0.6, delay: 0 },
-        { char: 'M', baseX: 0.95, splitDir: 1.8, delay: 0 },
-    ], []);
+   const letters = useMemo(() => [
+    { char: 'E', baseX: -1.5, splitDir: -2.0, delay: 0 },
+    { char: 'D', baseX: -0.9, splitDir: -1.2, delay: 0 },
+    { char: 'H', baseX: -0.3, splitDir: -0.4, delay: 0 },
+    { char: 'I', baseX: 0.3, splitDir: 0.4, delay: 0 },
+    { char: 'K', baseX: 0.9, splitDir: 1.2, delay: 0 },
+    { char: 'E', baseX: 1.5, splitDir: 2.0, delay: 0 },
+], []);
 
     // Tagline words for split effect
     const taglineWords = useMemo(() => [
@@ -134,7 +136,7 @@ const HeroText = ({ position = [0, 0.3, 0] }) => {
             {/* ITOM Letters - Rubik Scribble font with fade-in animation */}
             {letters.map((letter, i) => (
                 <Text
-                    key={letter.char}
+                    key={`${letter.char}-${i}`}
                     ref={(el) => (letterRefs.current[i] = el)}
                     position={[letter.baseX, 0.2, 0]}
                     fontSize={0.9}

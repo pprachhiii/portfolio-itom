@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { useFrame, useLoader, useThree } from '@react-three/fiber';
-import { Text, PositionalAudio } from '@react-three/drei';
+import { Text, PositionalAudio, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import gsap from 'gsap';
 import SkyChunk, { CHUNK_LENGTH, ROOM_Z } from './SkyChunk';
@@ -149,6 +149,237 @@ const STORY_CYCLE_LENGTH = 160;
 // -27 = 2 metry za drzwiami (w głąb pokoju) - musi matchować CORRIDOR_CLIP_Z w SkyChunk
 const MILESTONE_CORRIDOR_CLIP_Z = -8.0;
 
+const INDIAN_LOCATIONS = {
+    "Andhra Pradesh": ["Amaravati", "Visakhapatnam", "Vijayawada", "Tirupati"],
+    "Arunachal Pradesh": ["Itanagar", "Naharlagun"],
+    "Assam": ["Guwahati", "Dibrugarh", "Silchar"],
+    "Bihar": ["Patna", "Gaya", "Muzaffarpur"],
+    "Chhattisgarh": ["Raipur", "Bhilai", "Bilaspur"],
+    "Goa": ["Panaji", "Margao", "Vasco da Gama"],
+    "Gujarat": ["Ahmedabad", "Surat", "Vadodara", "Rajkot"],
+    "Haryana": ["Gurugram", "Faridabad", "Panipat", "Hisar"],
+    "Himachal Pradesh": ["Shimla", "Dharamshala", "Solan"],
+    "Jharkhand": ["Ranchi", "Jamshedpur", "Dhanbad"],
+    "Karnataka": ["Bengaluru", "Mysuru", "Mangaluru", "Hubballi"],
+    "Kerala": ["Thiruvananthapuram", "Kochi", "Kozhikode", "Thrissur"],
+    "Madhya Pradesh": ["Bhopal", "Indore", "Jabalpur", "Gwalior"],
+    "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Nashik", "Thane"],
+    "Manipur": ["Imphal"],
+    "Meghalaya": ["Shillong"],
+    "Mizoram": ["Aizawl"],
+    "Nagaland": ["Kohima", "Dimapur"],
+    "Odisha": ["Bhubaneswar", "Cuttack", "Rourkela"],
+    "Punjab": ["Ludhiana", "Amritsar", "Jalandhar", "Patiala"],
+    "Rajasthan": ["Jaipur", "Jodhpur", "Udaipur", "Kota"],
+    "Sikkim": ["Gangtok"],
+    "Tamil Nadu": ["Chennai", "Coimbatore", "Madurai", "Tiruchirappalli"],
+    "Telangana": ["Hyderabad", "Warangal", "Nizamabad"],
+    "Tripura": ["Agartala"],
+    "Uttar Pradesh": ["Lucknow", "Kanpur", "Noida", "Agra", "Varanasi", "Prayagraj", "Ghaziabad"],
+    "Uttarakhand": ["Dehradun", "Haridwar", "Roorkee"],
+    "West Bengal": ["Kolkata", "Siliguri", "Durgapur", "Howrah"],
+    "Delhi": ["New Delhi", "Delhi"],
+    "Jammu and Kashmir": ["Srinagar", "Jammu"],
+    "Ladakh": ["Leh", "Kargil"],
+    "Puducherry": ["Puducherry", "Karaikal"],
+    "Chandigarh": ["Chandigarh"],
+    "Andaman and Nicobar Islands": ["Port Blair"],
+    "Dadra and Nagar Haveli and Daman and Diu": ["Daman", "Silvassa"],
+    "Lakshadweep": ["Kavaratti"]
+};
+
+const PROFILE_STATIONS = [
+    // Four stations sit slightly above the lower centre, with a clear gap through the middle.
+    { key: 'name', label: 'YOUR NAME', placeholder: 'Enter your full name', position: [-4.6, 3.0, -18] },
+    { key: 'phone', label: 'PHONE NUMBER', placeholder: '10-digit mobile number', position: [4.6, 3.0, -18] },
+    { key: 'email', label: 'EMAIL ADDRESS', placeholder: 'you@example.com', position: [-4.6, -2.8, -18] },
+    { key: 'location', label: 'YOUR LOCATION', placeholder: 'Choose state and city', position: [4.6, -2.8, -18] }
+];
+
+const CloudProfileJourney = ({ scrollProgressRef }) => {
+    const { saveRoomAnswer, submitJourneyToSheet } = useScene();
+    const stationGroupRefs = useRef([]);
+    const [profile, setProfile] = useState({ name: '', phone: '', email: '', state: '', city: '' });
+    const [submitted, setSubmitted] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState('');
+    const cities = profile.state ? (INDIAN_LOCATIONS[profile.state] || []) : [];
+
+    const update = (key, value) => {
+        setProfile(previous => ({ ...previous, [key]: value, ...(key === 'state' ? { city: '' } : {}) }));
+        setError('');
+    };
+
+    const handleSubmit = async (event) => {
+        event.preventDefault();
+        if (isSubmitting || submitted) return;
+
+        const phoneDigits = profile.phone.replace(/\D/g, '');
+        if (!profile.name.trim() || !profile.email.trim() || phoneDigits.length !== 10 || !profile.state || !profile.city) {
+            setError('Please complete every field. Enter a valid 10-digit phone number.');
+            return;
+        }
+
+        const payload = {
+            ...profile,
+            name: profile.name.trim(),
+            email: profile.email.trim(),
+            phone: phoneDigits
+        };
+
+        setIsSubmitting(true);
+        setError('');
+
+        try {
+            if (typeof submitJourneyToSheet !== 'function') {
+                throw new Error('The Google Sheets submission function is unavailable.');
+            }
+
+            // Send the previous room answers and this final profile together.
+            await submitJourneyToSheet(payload);
+
+            if (typeof saveRoomAnswer === 'function') {
+                saveRoomAnswer('about', payload);
+            }
+
+            try {
+                sessionStorage.setItem('mbaProfileDetails', JSON.stringify(payload));
+            } catch (storageError) {
+                // Submission should not fail solely because browser storage is unavailable.
+            }
+
+            setSubmitted(true);
+        } catch (submissionError) {
+            setError(
+                submissionError?.message ||
+                'We could not send your details. Please try again.'
+            );
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // All four cloud stations share one depth and remain visible together.
+    // Scrolling still moves the entire cloud group naturally with the sky.
+    useFrame(() => {
+        const progress = scrollProgressRef?.current || 0;
+        PROFILE_STATIONS.forEach((station, index) => {
+            const group = stationGroupRefs.current[index];
+            if (!group) return;
+            const relativeZ = station.position[2] + progress;
+            group.visible = relativeZ >= -22 && relativeZ <= -4;
+        });
+    });
+
+    const inputStyle = {
+        boxSizing: 'border-box', width: '100%', height: 38, padding: '0 13px',
+        border: '1px solid rgba(34, 45, 54, .16)', borderRadius: 22,
+        background: 'rgba(255,255,255,.97)', color: '#20252a', outline: 'none',
+        font: '500 12px/1.2 Inter, system-ui, sans-serif',
+        boxShadow: '0 2px 7px rgba(35, 62, 77, .06)'
+    };
+
+    const renderInput = (station) => {
+        if (station.key === 'location') {
+            return <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+                <select aria-label="Your state" value={profile.state} onChange={e => update('state', e.target.value)} style={inputStyle}>
+                    <option value="">Choose your state</option>
+                    {Object.keys(INDIAN_LOCATIONS).sort().map(state => <option key={state} value={state}>{state}</option>)}
+                </select>
+                <select aria-label="Your city" value={profile.city} onChange={e => update('city', e.target.value)} style={inputStyle} disabled={!profile.state}>
+                    <option value="">{profile.state ? 'Choose your city' : 'Choose state first'}</option>
+                    {cities.map(city => <option key={city} value={city}>{city}</option>)}
+                </select>
+            </div>;
+        }
+
+        return <input
+            aria-label={station.label}
+            type={station.key === 'email' ? 'email' : station.key === 'phone' ? 'tel' : 'text'}
+            inputMode={station.key === 'phone' ? 'numeric' : undefined}
+            autoComplete={station.key === 'name' ? 'name' : station.key === 'phone' ? 'tel' : station.key === 'email' ? 'email' : 'off'}
+            maxLength={station.key === 'phone' ? 15 : 120}
+            placeholder={station.placeholder}
+            value={profile[station.key]}
+            onChange={e => update(station.key, e.target.value)}
+            style={inputStyle}
+        />;
+    };
+
+    return <group position={[0, 0.8, 0]}>
+        {PROFILE_STATIONS.map((station, index) => (
+            <group key={station.key} ref={node => { stationGroupRefs.current[index] = node; }} position={station.position}>
+                {/* Three.js cloud silhouette behind each DOM form. */}
+                <mesh position={[0, -0.2, -0.08]} scale={[1.42, 0.72, 0.42]}>
+                    <sphereGeometry args={[1, 24, 16]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.82} depthWrite={false} />
+                </mesh>
+                <mesh position={[-0.85, 0.02, -0.07]} scale={[0.58, 0.62, 0.38]}>
+                    <sphereGeometry args={[1, 20, 14]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.86} depthWrite={false} />
+                </mesh>
+                <mesh position={[-0.38, 0.42, -0.07]} scale={[0.62, 0.72, 0.38]}>
+                    <sphereGeometry args={[1, 20, 14]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.86} depthWrite={false} />
+                </mesh>
+                <mesh position={[0.38, 0.42, -0.07]} scale={[0.66, 0.72, 0.38]}>
+                    <sphereGeometry args={[1, 20, 14]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.86} depthWrite={false} />
+                </mesh>
+                <mesh position={[0.88, 0.03, -0.07]} scale={[0.58, 0.58, 0.38]}>
+                    <sphereGeometry args={[1, 20, 14]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.86} depthWrite={false} />
+                </mesh>
+
+                <Html center transform={false} occlude={false} zIndexRange={[10000, 9000]}>
+                    <div data-profile-form="true" style={{
+                        width: 'min(264px, 36vw)', minWidth: 210, boxSizing: 'border-box',
+                        padding: '34px 21px 20px', position: 'relative',
+                        color: '#20252a', fontFamily: 'Inter, system-ui, sans-serif',
+                        pointerEvents: 'auto', isolation: 'isolate',
+                        filter: 'drop-shadow(0 10px 14px rgba(31,64,83,.15))'
+                    }}>
+                        {/* DOM cloud lobes make the overlay itself cloud-shaped, not rectangular. */}
+                        <div aria-hidden="true" style={{
+                            position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none'
+                        }}>
+                            <div style={{
+                                position: 'absolute', left: '4%', right: '4%', top: '24%', bottom: '7%',
+                                borderRadius: '48% 48% 42% 42% / 42% 42% 52% 52%',
+                                background: 'linear-gradient(145deg, rgba(255,255,255,.99), rgba(238,248,255,.97))',
+                                border: '1px solid rgba(255,255,255,.98)'
+                            }} />
+                            {[
+                                { left: '8%', top: '15%', width: '29%', height: '37%' },
+                                { left: '25%', top: '3%', width: '34%', height: '44%' },
+                                { left: '48%', top: '1%', width: '33%', height: '46%' },
+                                { left: '68%', top: '15%', width: '25%', height: '35%' }
+                            ].map((lobe, lobeIndex) => <div key={lobeIndex} style={{
+                                position: 'absolute', ...lobe, borderRadius: '50%',
+                                background: 'linear-gradient(145deg, rgba(255,255,255,1), rgba(240,249,255,.98))',
+                                border: '1px solid rgba(255,255,255,.98)'
+                            }} />)}
+                        </div>
+
+                        <div style={{ fontSize: 9, letterSpacing: '1.8px', fontWeight: 800, color: '#557584', marginBottom: 7, textAlign: 'center' }}>
+                            PROFILE · {index + 1} OF 4
+                        </div>
+                        <label style={{ display: 'block', fontSize: 12, letterSpacing: '1px', fontWeight: 800, marginBottom: 9, textAlign: 'center' }}>
+                            {station.label}
+                        </label>
+
+                        {station.key === 'location' ? <form onSubmit={handleSubmit} style={{ margin: 0 }}>
+                            {renderInput(station)}
+                            {error && <div role="alert" style={{ color: '#a52c2c', fontSize: 10, marginTop: 7 }}>{error}</div>}
+                            {submitted ? <div role="status" style={{ marginTop: 10, padding: '9px 10px', borderRadius: 18, background: '#e7f7ed', color: '#17623a', fontWeight: 800, fontSize: 11, textAlign: 'center' }}>YOU’RE ALL SET<br /><span style={{ fontWeight: 500 }}>Our counsellor will contact you soon.</span></div> : <button type="submit" disabled={isSubmitting} style={{ marginTop: 9, width: '100%', border: 0, borderRadius: 24, padding: '10px 12px', background: isSubmitting ? '#71818a' : '#182a35', color: '#fff', fontWeight: 800, fontSize: 11, letterSpacing: '.4px', cursor: isSubmitting ? 'wait' : 'pointer' }}>{isSubmitting ? 'SENDING…' : 'COMPLETE MY JOURNEY ↗'}</button>}
+                        </form> : renderInput(station)}
+                    </div>
+                </Html>
+            </group>
+        ))}
+    </group>;
+};
+
 const InfiniteSkyManager = ({ scrollProgressRef }) => {
     // PRE-CALCULATED FOR scrolProgress = 0
     // currentChunk = floor(0/40) = 0 -> [-1, 0, 1, 2]
@@ -219,6 +450,10 @@ const InfiniteSkyManager = ({ scrollProgressRef }) => {
                     scrollProgressRef={scrollProgressRef}
                 />
             ))}
+
+            {/* === FIXED PROFILE CLOUDS === */}
+            {/* Inputs use non-occluded DOM overlays, so drifting SkyChunk clouds cannot cover them. */}
+            <CloudProfileJourney scrollProgressRef={scrollProgressRef} />
 
             {/* === STORY MILESTONES (loop every 160 units) === */}
             {activeStoryCycles.map((cycleIndex) => (

@@ -16,6 +16,11 @@ const WALL_X_INNER = 1.7;
 const DOOR_Z_SPAN = 4;
 const CORRIDOR_HEIGHT = 3.5;
 
+// IMPORTANT: this string must be identical to the one in Experience.jsx.
+// Experience dispatches it when the camera has arrived in front of the next
+// required door; the matching door (segment 0 only) then opens itself.
+const JOURNEY_DOOR_ARRIVED_EVENT = 'journey-door-arrived';
+
 const DOOR_AUDIO_SETTINGS = {
     hoverVolume: 0.8, // Volume for "uchyleniedrzwi" (hovering the door)
     openVolume: 0.2,  // Volume for "otwarciedrzwi" (opening the door fully)
@@ -38,6 +43,9 @@ const DOOR_LOOK_ANGLE = Math.PI * 0.334;
 // Camera X offset when aligning with door (adjust this to move camera left/right relative to door)
 // Higher value = further from door center horizontally
 const DOOR_ALIGN_X = 1.2;
+
+// Standard camera height (matches useInfiniteCamera: 0.2 + parallax.y)
+const CAMERA_BASE_Y = 0.2;
 
 // Door texture mapping - maps label to texture file
 const DOOR_TEXTURES = {
@@ -64,17 +72,19 @@ const DOOR_PAINTED_TEXTURES = {
  * Pivots from the OUTER edge (where wall connects to corridor).
  * Dynamic tilt: starts nearly flat, tilts more when camera approaches.
  */
-const DoorSection = ({
-    position, // [x, y, z] - center of the wall segment
+const DoorSection = ({ 
+    position,
     side = 'left',
     label,
-    roomId, // ID for context updates (gallery, studio, etc)
+    roomId,
     icon,
     onEnter,
     autoCloseDelay = 3000,
-    enterDistance = 8, // Default fly-through distance
-    setCameraOverride, // Function to take control of camera from hook
-    segmentIndex
+    enterDistance = 8,
+    setCameraOverride,
+    segmentIndex,
+    autoTrigger = false,
+    onAutoTriggerHandled
 }) => {
     const groupRef = useRef(); // Main group that tilts
     const doorRef = useRef();
@@ -107,7 +117,13 @@ const DoorSection = ({
         isTeleporting,
         isFastTeleport,
         signalRoomReady,
-        teleportPhase // We need this to delay reset until curtain is closed
+        teleportPhase, // We need this to delay reset until curtain is closed
+        canEnterRoom,
+        isJourneyRoom,
+        isRoomComplete,
+        nextRequiredRoom,
+        teleportTo,
+        cancelTeleport
     } = useScene();
 
     const { unlockAchievement } = useAchievements();
@@ -130,16 +146,72 @@ const DoorSection = ({
         return null;
     }, [label, roomId]);
 
-    // Listen for pending door click (auto-click after teleport)
-    useEffect(() => {
-        // Only trigger for segment 0 doors (closest to start) and matching ID
-        // We assume teleport always goes to segment 0
-        const isSegment0 = segmentIndex === 0;
+    // Prevent repeated redirect attempts while a required-room teleport is running.
+    const redirectTargetRef = useRef(null);
+    const redirectEffectLockRef = useRef(false);
 
-        if (pendingDoorClick && pendingDoorClick === doorId && isSegment0 && !isOpen && !isAnimating) {
-            handleClick({ stopPropagation: () => { }, isTeleport: true }); // Trigger click simulation with TELEPORT flag
+    // Keep the latest callbacks available to delayed/external triggers.
+    const latestHandleClickRef = useRef(null);
+    const latestPermissionCheckRef = useRef(null);
+
+    // Enforce the journey rules for every way a door can be entered.
+    // Unknown/non-journey doors retain their existing behavior.
+    const enforceDoorPermission = useCallback(() => {
+        if (!doorId || !isJourneyRoom(doorId)) return true;
+        if (canEnterRoom(doorId)) return true;
+
+        const requiredRoom = nextRequiredRoom;
+        if (!requiredRoom || !isJourneyRoom(requiredRoom)) return false;
+
+        // If another teleport is active, cancel it and let the effect below
+        // start the redirect after the context has rendered its idle state.
+        if (isTeleporting) {
+            redirectTargetRef.current = requiredRoom;
+            cancelTeleport();
+            return false;
         }
-    }, [pendingDoorClick, doorId, segmentIndex, isOpen, isAnimating]);
+
+        // Do not repeatedly request the same redirect on rerenders.
+        if (redirectTargetRef.current !== requiredRoom) {
+            redirectTargetRef.current = requiredRoom;
+            teleportTo(requiredRoom);
+        }
+
+        return false;
+    }, [
+        doorId,
+        isJourneyRoom,
+        canEnterRoom,
+        nextRequiredRoom,
+        isTeleporting,
+        cancelTeleport,
+        teleportTo
+    ]);
+
+    // Resume a redirect only after a previously active teleport has been cancelled.
+    useEffect(() => {
+        const target = redirectTargetRef.current;
+        if (!target || isTeleporting || redirectEffectLockRef.current) return;
+
+        redirectEffectLockRef.current = true;
+        if (target !== currentRoom && canEnterRoom(target)) {
+            teleportTo(target);
+        }
+        redirectEffectLockRef.current = false;
+    }, [isTeleporting, currentRoom, canEnterRoom, teleportTo]);
+
+    // Clear the redirect lock once the required destination is reached.
+    // This allows a later blocked attempt to redirect again after the user exits.
+    useEffect(() => {
+        const redirectTarget = redirectTargetRef.current;
+        if (
+            redirectTarget &&
+            (pendingDoorClick === redirectTarget || currentRoom === redirectTarget)
+        ) {
+            redirectTargetRef.current = null;
+        }
+    }, [pendingDoorClick, currentRoom]);
+
 
     // --- SILENT RESET FOR TELEPORTATION ---
     // If a teleport starts (users clicks map), and we are inside THIS room,
@@ -176,7 +248,6 @@ const DoorSection = ({
         }
     }, [isTeleporting, teleportPhase, isInsideRoom, currentRoom, doorId, label, setCameraOverride]);
 
-    // Save camera state before entering room (for ESC exit)
     // Save camera state before entering room (for ESC exit)
     // Now saving FULL rotation (x, y, z) to prevent snap on exit
     const savedCameraState = useRef({ x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0 });
@@ -378,8 +449,13 @@ const DoorSection = ({
 
     useEffect(() => {
         return () => {
-            if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-            if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+            if (closeTimerRef.current) {
+                clearTimeout(closeTimerRef.current);
+            }
+
+            if (loadTimeoutRef.current) {
+                clearTimeout(loadTimeoutRef.current);
+            }
         };
     }, []);
 
@@ -387,6 +463,9 @@ const DoorSection = ({
         // e might be null or synthetic from teleport
         e?.stopPropagation?.();
         const isTeleport = e?.isTeleport || false;
+
+        // Never start or continue a door interaction for an unauthorized room.
+        if (!enforceDoorPermission()) return;
         if (isAnimating) return;
 
         if (isOpen) {
@@ -425,7 +504,7 @@ const DoorSection = ({
 
             savedCameraState.current = {
                 x: 0,
-                y: 0.2, // Correct height matching useInfiniteCamera
+                y: CAMERA_BASE_Y, // Correct height matching useInfiniteCamera
                 z: position[2] + 4, // 4 meters back from the door Z
                 rotationX: 0,
                 rotationY: corridorGlanceY, // Natural corridor glance, not intense door stare
@@ -469,26 +548,33 @@ const DoorSection = ({
         // Compensate for parent sway to get consistent local rotation
         const targetRotationY = worldTargetRotationY - parentRotationY;
 
-        // Store initial rotation
-        const startRotationY = camera.rotation.y;
-
-        // Create a proxy object for the rotation animation
-        const rotationProxy = { y: startRotationY };
+        // Create a proxy object for the rotation animation.
+        // We animate ALL three axes so any leftover pitch/bank (for example from a
+        // previous room exit) is levelled out. Every door then starts its
+        // fly-through from exactly the same clean orientation as the Gallery.
+        const rotationProxy = {
+            x: camera.rotation.x,
+            y: camera.rotation.y,
+            z: camera.rotation.z
+        };
 
         // Animate camera position and rotation simultaneously
         gsap.to(camera.position, {
             x: cameraTargetX,
+            y: CAMERA_BASE_Y,
             z: cameraTargetZ,
             duration: alignDuration,
             ease: useFastMode ? 'none' : 'power2.inOut'
         });
 
         gsap.to(rotationProxy, {
+            x: 0, // level pitch
             y: targetRotationY,
+            z: 0, // level bank
             duration: alignDuration,
             ease: useFastMode ? 'none' : 'power2.inOut',
             onUpdate: () => {
-                camera.rotation.y = rotationProxy.y;
+                camera.rotation.set(rotationProxy.x, rotationProxy.y, rotationProxy.z);
             },
             onComplete: () => {
                 // Save aligned state for reverse animation
@@ -523,10 +609,108 @@ const DoorSection = ({
                 }, 8000);
             }
         });
-    }, [camera, side, isOpen, isAnimating, setCameraOverride, isFastTeleport]);
+    }, [camera, side, isOpen, isAnimating, setCameraOverride, isFastTeleport, enforceDoorPermission]);
+
+    // Keep references current so external/delayed triggers always call the latest version.
+    latestHandleClickRef.current = handleClick;
+    latestPermissionCheckRef.current = enforceDoorPermission;
+
+    // Listen for pending door click (auto-click after teleport).
+    // Permission is checked again because answers may have changed during teleport.
+    useEffect(() => {
+        const isSegment0 = segmentIndex === 0;
+        if (!pendingDoorClick || pendingDoorClick !== doorId || !isSegment0 || isOpen || isAnimating) {
+            return;
+        }
+
+        if (!enforceDoorPermission()) return;
+        handleClick({ stopPropagation: () => {}, isTeleport: true });
+    }, [
+        pendingDoorClick,
+        doorId,
+        segmentIndex,
+        isOpen,
+        isAnimating,
+        enforceDoorPermission,
+        handleClick
+    ]);
+
+    // Initial Gallery auto-trigger (first visit only, driven by Experience).
+    useEffect(() => {
+        if (!autoTrigger) return;
+        if (label !== 'THE GALLERY') return;
+        if (segmentIndex !== 0) return;
+        if (isOpen || isAnimating) return;
+
+        // Consume the automatic trigger once, even if permission redirects us.
+        onAutoTriggerHandled?.();
+
+        // Automatic entry is subject to the same journey permission check.
+        if (!enforceDoorPermission()) return;
+
+        handleClick({
+            stopPropagation: () => {},
+            isAutoTrigger: true
+        });
+    }, [
+        autoTrigger,
+        label,
+        segmentIndex,
+        isOpen,
+        isAnimating,
+        enforceDoorPermission,
+        handleClick,
+        onAutoTriggerHandled
+    ]);
+
+    // Open this door when Experience reports that the camera has arrived in
+    // front of it (Studio / Contact / About, after the previous room was exited).
+    //
+    // - Only the segment 0 copy of the door responds. Other corridor segments
+    //   contain doors with the same room id; they must never react.
+    // - Experience keeps the camera override ON until we take over here, so the
+    //   infinite-camera hook cannot overwrite the align / fly-through tweens.
+    useEffect(() => {
+        const onArrived = (e) => {
+            const detail = e?.detail;
+            if (!detail || detail.roomId !== doorId) return;
+            if (segmentIndex !== 0) return;
+
+            // Tell Experience that a door took ownership of the camera.
+            detail.handled = true;
+
+            // Door already busy (opened / animating): leave everything as it is.
+            if (isOpen || isAnimating) return;
+
+            // Not allowed: give the camera back so the user is never stuck.
+            if (!doorId || !canEnterRoom(doorId)) {
+                setCameraOverride?.(false);
+                return;
+            }
+
+            latestHandleClickRef.current?.({
+                stopPropagation: () => {},
+                isAutoTrigger: true
+            });
+        };
+
+        window.addEventListener(JOURNEY_DOOR_ARRIVED_EVENT, onArrived);
+        return () => {
+            window.removeEventListener(JOURNEY_DOOR_ARRIVED_EVENT, onArrived);
+        };
+    }, [doorId, segmentIndex, isOpen, isAnimating, canEnterRoom, setCameraOverride]);
 
     const openDoor = useCallback((fastMode = false) => {
         if (!doorRef.current) return;
+
+        // Re-check immediately before the door begins opening, after lazy loading.
+        if (!enforceDoorPermission()) {
+            setIsAnimating(false);
+            setShouldRenderRoom(false);
+            setIsTiltLocked(false);
+            setCameraOverride?.(false);
+            return;
+        }
 
         setIsOpen(true);
         const openAngle = side === 'left' ? Math.PI * 0.6 : -Math.PI * 0.6;
@@ -562,6 +746,13 @@ const DoorSection = ({
                 const direction = new THREE.Vector3();
                 camera.getWorldDirection(direction);
 
+                // Fly strictly horizontally: any leftover pitch must not shorten
+                // or skew the flight. Every door gets the same fly distance.
+                direction.y = 0;
+                if (direction.lengthSq() > 0.0001) {
+                    direction.normalize();
+                }
+
                 const flyDistance = enterDistance; // Fly through short vestibule (3) + into room
 
                 // Calculate TARGET position BEFORE animating (so flight path is straight)
@@ -591,7 +782,30 @@ const DoorSection = ({
                         // Defer context update exactly 250ms to strictly avoid any
                         // stutter during the very last frames of the GSAP animation loop.
                         setTimeout(() => {
-                            enterRoom(doorId); // Use ID ('gallery') not label ('THE GALLERY')
+                            // Re-check at the final entry boundary in case journey state changed
+                            // while the camera was aligning/loading/flying through the door.
+                            if (!canEnterRoom(doorId) || !enterRoom(doorId)) {
+                                setIsInsideRoom(false);
+                                setIsAnimating(false);
+                                setIsOpen(false);
+                                setShouldRenderRoom(false);
+                                setIsTiltLocked(false);
+                                setRoomReady(false);
+                                roomReadyRef.current = false;
+
+                                if (doorRef.current) doorRef.current.rotation.y = 0;
+                                if (handleRef.current) handleRef.current.rotation.z = 0;
+
+                                const saved = savedCameraState.current;
+                                if (saved) {
+                                    camera.position.set(saved.x, saved.y, saved.z);
+                                    camera.rotation.set(saved.rotationX, saved.rotationY, saved.rotationZ);
+                                }
+                                setCameraOverride?.(false);
+                                enforceDoorPermission();
+                                return;
+                            }
+
                             onEnter?.();
 
                             // FAST TELEPORT: Signal that room is ready - this opens the paper
@@ -603,7 +817,17 @@ const DoorSection = ({
                 });
             }
         });
-    }, [side, onEnter, camera, enterRoom, doorId, signalRoomReady]);
+    }, [
+        side,
+        onEnter,
+        camera,
+        enterRoom,
+        doorId,
+        signalRoomReady,
+        canEnterRoom,
+        enforceDoorPermission,
+        setCameraOverride
+    ]);
 
     // Handle room ready callback - open door when room is fully loaded
     // Use ref to prevent multiple calls (state might not update fast enough)
@@ -625,6 +849,21 @@ const DoorSection = ({
     // Exit room function - TRUE REVERSE animation (like rewinding video)
     const exitRoom = useCallback(() => {
         if (!isInsideRoom || isAnimating) return;
+
+        // A journey room cannot be exited until its answer has been saved.
+        // This ensures the user cannot bypass a question by pressing ESC/back.
+        if (
+            doorId &&
+            typeof isJourneyRoom === 'function' &&
+            isJourneyRoom(doorId) &&
+            typeof isRoomComplete === 'function' &&
+            !isRoomComplete(doorId)
+        ) {
+            console.warn(
+                `[DoorSection ${label}] Save/select an answer before leaving this room.`
+            );
+            return;
+        }
 
         setIsAnimating(true);
 
@@ -728,7 +967,17 @@ const DoorSection = ({
                 });
             }
         });
-    }, [isInsideRoom, isAnimating, camera, setCameraOverride, contextExitRoom]);
+    }, [
+        isInsideRoom,
+        isAnimating,
+        camera,
+        setCameraOverride,
+        contextExitRoom,
+        doorId,
+        label,
+        isJourneyRoom,
+        isRoomComplete
+    ]);
 
     // ESC key listener for exiting room
     useEffect(() => {
@@ -1073,23 +1322,13 @@ const DoorSection = ({
                             <group position={[0, 0, 0.01]}>
                                 <Text
                                     font="/fonts/CabinSketch-Bold.ttf"
-                                    fontSize={0.25}
-                                    color="#111111"
-                                    anchorX="center"
-                                    anchorY="bottom"
-                                    position={[0, -0.02, 0]}
-                                >
-                                    THE
-                                </Text>
-                                <Text
-                                    font="/fonts/CabinSketch-Bold.ttf"
-                                    fontSize={0.25}
+                                    fontSize={0.16}
                                     color="#111111"
                                     anchorX="center"
                                     anchorY="top"
                                     position={[0, +0.02, 0]}
                                 >
-                                    GALLERY
+                                    SPECIALIZATION
                                 </Text>
                             </group>
                         )}
@@ -1103,7 +1342,7 @@ const DoorSection = ({
                                     anchorY="bottom"
                                     position={[0, -0.02, 0]}
                                 >
-                                    THE
+                                    EDUCATION 
                                 </Text>
                                 <Text
                                     font="/fonts/CabinSketch-Bold.ttf"
@@ -1113,7 +1352,7 @@ const DoorSection = ({
                                     anchorY="top"
                                     position={[0, +0.03, 0]}
                                 >
-                                    STUDIO
+                                    LEVEL
                                 </Text>
                             </group>
                         )}
@@ -1138,7 +1377,7 @@ const DoorSection = ({
                                 anchorY="middle"
                                 position={[0, 0, 0.01]}
                             >
-                                CONTACT
+                                BUDGET
                             </Text>
                         )}
                     </group>

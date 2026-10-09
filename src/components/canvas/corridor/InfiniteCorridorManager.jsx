@@ -50,9 +50,11 @@ const SegmentVisibilityWrapper = ({ children, segmentIndex }) => {
  */
 const InfiniteCorridorManager = ({
     onDoorEnter,
-    hideDoorsForSegments = [], // Segments that should hide their SegmentDoors
-    clipSegmentNeg1 = false, // Whether to clip segment -1 at EntranceDoors
-    setCameraOverride // Function to take over camera control
+    hideDoorsForSegments = [],
+    clipSegmentNeg1 = false,
+    setCameraOverride,
+    autoTriggerGallery = false,
+    onGalleryAutoTriggerHandled
 }) => {
     const { camera } = useThree();
     // Pre-mount segments 0 and 1 so shaders compile during preloader.
@@ -87,18 +89,33 @@ const InfiniteCorridorManager = ({
 
     return (
         <group>
-            {activeSegments.map((segmentIndex) => (
-                <SegmentVisibilityWrapper key={`seg-wrap-${segmentIndex}`} segmentIndex={segmentIndex}>
-                    <CorridorSegment
-                        key={`segment-${segmentIndex}`}
+            {activeSegments.map((segmentIndex) => {
+                // The automatic entrance trigger belongs only to the gallery door
+                // in segment 0. Never let a recycled/adjacent segment consume it.
+                const isInitialGallerySegment = segmentIndex === 0;
+
+                return (
+                    <SegmentVisibilityWrapper
+                        key={`seg-wrap-${segmentIndex}`}
                         segmentIndex={segmentIndex}
-                        onDoorEnter={onDoorEnter}
-                        hideSegmentDoors={hideDoorsForSegments.includes(segmentIndex)}
-                        zClip={clipSegmentNeg1 && segmentIndex === -1 ? 22 : 100000}
-                        setCameraOverride={setCameraOverride}
-                    />
-                </SegmentVisibilityWrapper>
-            ))}
+                    >
+                        <CorridorSegment
+                            key={`segment-${segmentIndex}`}
+                            segmentIndex={segmentIndex}
+                            onDoorEnter={onDoorEnter}
+                            hideSegmentDoors={hideDoorsForSegments.includes(segmentIndex)}
+                            zClip={clipSegmentNeg1 && segmentIndex === -1 ? 22 : 100000}
+                            setCameraOverride={setCameraOverride}
+                            autoTriggerGallery={Boolean(autoTriggerGallery && isInitialGallerySegment)}
+                            onGalleryAutoTriggerHandled={
+                                isInitialGallerySegment
+                                    ? onGalleryAutoTriggerHandled
+                                    : undefined
+                            }
+                        />
+                    </SegmentVisibilityWrapper>
+                );
+            })}
         </group>
     );
 };

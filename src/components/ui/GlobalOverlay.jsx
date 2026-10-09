@@ -7,7 +7,7 @@ import '../../styles/GlobalOverlay.scss';
 gsap.registerPlugin(TextPlugin);
 
 const GlobalOverlay = () => {
-    const { overlayContent, closeOverlay } = useScene();
+    const { overlayContent, closeOverlay, saveRoomAnswer, requestExit } = useScene();
     const [isVisible, setIsVisible] = useState(false);
     const [animateOpen, setAnimateOpen] = useState(false);
 
@@ -65,13 +65,39 @@ const GlobalOverlay = () => {
     const content = overlayContent || cachedContent || dummyGridContent;
 
     // Propagate animateOpen state to control CSS transitions
-    return <ContentCard content={content} isOpen={animateOpen} onClose={closeOverlay} isMobile={isMobile} />;
+    return <ContentCard content={content} isOpen={animateOpen} onClose={closeOverlay} isMobile={isMobile} saveRoomAnswer={saveRoomAnswer} requestExit={requestExit} />;
 };
 
-const ContentCard = ({ content, isOpen, onClose, isMobile }) => {
+const ContentCard = ({ content, isOpen, onClose, isMobile, saveRoomAnswer, requestExit }) => {
     if (!content) return null;
 
     const label = content.platformConfig?.label || 'Content';
+
+    // Studio education-level cards use the existing overlay action as confirmation.
+    // Other overlay content keeps its original external-link behavior.
+    const handleSelectEducationLevel = () => {
+        const selectedEducationLevel =
+            content.title || content.label || content.platformConfig?.label;
+
+        if (
+            content.journeyRoom !== 'studio' ||
+            typeof selectedEducationLevel !== 'string' ||
+            !selectedEducationLevel.trim()
+        ) {
+            return;
+        }
+
+        const saved = saveRoomAnswer?.(
+            'studio',
+            selectedEducationLevel.trim()
+        );
+
+        // Do not close the overlay or advance if saving failed.
+        if (saved !== true) return;
+
+        // requestExit closes the overlay and signals the existing room-exit flow.
+        requestExit?.();
+    };
 
     // GSAP TextPlugin typing effect for description
     const descriptionRef = useRef(null);
@@ -532,14 +558,24 @@ const ContentCard = ({ content, isOpen, onClose, isMobile }) => {
                                 paddingTop: '1rem',
                                 ...getStaggerStyle(400)
                             }}>
-                                <a
-                                    href={content.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="studio-action-button"
-                                >
-                                    Open Link ↗
-                                </a>
+                                {content.journeyRoom === 'studio' ? (
+                                    <button
+                                        type="button"
+                                        onClick={handleSelectEducationLevel}
+                                        className="studio-action-button"
+                                    >
+                                        Select
+                                    </button>
+                                ) : (
+                                    <a
+                                        href={content.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="studio-action-button"
+                                    >
+                                        Open Link ↗
+                                    </a>
+                                )}
                             </div>
                         </>
                     )}

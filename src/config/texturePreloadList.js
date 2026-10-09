@@ -9,8 +9,8 @@ export const ENTRANCE_TEXTURES = [
     '/textures/paper-texture.webp',
     // Doors
     '/textures/doors/frame_sketch.webp',
-    '/textures/doors/door_left_sketch.webp',
-    '/textures/doors/door_right_sketch.webp',
+    '/textures/doors/door_left_sketch.png',
+    '/textures/doors/door_right_sketch.png',
     '/textures/doors/handle_left_sketch.webp',
     '/textures/doors/handle_right_sketch.webp',
     '/textures/doors/door_back_left_sketch.webp',
@@ -20,7 +20,7 @@ export const ENTRANCE_TEXTURES = [
     '/textures/entrance/stone-path.webp',
     '/textures/entrance/floor_paper.webp',
     '/textures/entrance/belka.webp',
-    '/textures/entrance/sign.webp',
+    '/textures/entrance/sign.png',
     // Characters/Objects
     '/textures/entrance/cat_front_body.webp',
     '/textures/entrance/window_sketch.webp',

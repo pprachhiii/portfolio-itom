@@ -20,6 +20,10 @@ const CORRIDOR_CLIP_Z = -8.0;
 // Pozycja pokoju w world space (hardcoded, bo AboutRoom ma position=[0,0,-25])
 const ROOM_Z = -25;
 
+// Clear corridor in the middle of the screen (tweak these)
+const GAP_NEAR = 3;        // half-gap (world units) right at the camera
+const GAP_PER_UNIT = 0.3;  // how much the half-gap widens per unit of distance (bigger = wider gap)
+
 // Available cloud textures
 const CLOUD_TEXTURES = [
     '/textures/clouds/1131c3eb-dfae-423f-924b-ff39d8ccd6dc.webp',
@@ -135,31 +139,33 @@ const Cloud = ({
 
         // === CLOUD EVASION EFFECT ===
         // As clouds get closer to the camera, they move aside to keep the center clear
-        const evasionStart = -60;
-        const evasionEnd = -10;
-        let evasionFactor = 0;
+        // === CLOUD EVASION (soft push aside as clouds pass the camera) ===
+const evasionStart = -60;
+const evasionEnd = -10;
+let evasionFactor = 0;
+if (worldZ > evasionStart && worldZ < evasionEnd) {
+    evasionFactor = (worldZ - evasionStart) / (evasionEnd - evasionStart);
+    evasionFactor = evasionFactor * evasionFactor * (3 - 2 * evasionFactor);
+} else if (worldZ >= evasionEnd) {
+    evasionFactor = 1;
+}
+const dirX = basePosition.current[0] >= 0 ? 1 : -1;
+const maxEvasion = 5; // was 15; the guaranteed gap below does most of the work now
+const evasionX = evasionFactor * maxEvasion * dirX;
 
-        if (worldZ > evasionStart && worldZ < evasionEnd) {
-            evasionFactor = (worldZ - evasionStart) / (evasionEnd - evasionStart);
-            // Smoothstep for natural ease in and out
-            evasionFactor = evasionFactor * evasionFactor * (3 - 2 * evasionFactor);
-        } else if (worldZ >= evasionEnd) {
-            evasionFactor = 1;
-        }
+// === DRIFT ===
+const driftX = Math.sin(time * driftSpeed + timeOffset) * driftAmount;
+const driftY = Math.sin(time * driftSpeed * 0.7 + timeOffset + 1.5) * bobAmount;
 
-        // Push left/right based on initial X position to open up the middle
-        const dirX = basePosition.current[0] >= 0 ? 1 : -1;
-        const maxEvasion = 15;
-        const evasionX = evasionFactor * maxEvasion * dirX;
+// === GUARANTEED CENTER GAP (scales with distance so it looks constant on screen) ===
+const dist = Math.max(0, -worldZ);                       // distance in front of camera
+const halfGap = GAP_NEAR + dist * GAP_PER_UNIT + width * 0.5; // include cloud's own half-width
+const rawX = basePosition.current[0] + driftX;
+const sideX = dirX * Math.max(Math.abs(rawX), halfGap);  // never let a cloud enter the corridor
 
-        // === DRIFT ANIMATION ===
-        const driftX = Math.sin(time * driftSpeed + timeOffset) * driftAmount;
-        const driftY = Math.sin(time * driftSpeed * 0.7 + timeOffset + 1.5) * bobAmount;
-
-        // Apply drift and evasion to position
-        meshRef.current.position.x = basePosition.current[0] + driftX + evasionX;
-        meshRef.current.position.y = basePosition.current[1] + driftY;
-        meshRef.current.position.z = basePosition.current[2];
+meshRef.current.position.x = sideX + evasionX;
+meshRef.current.position.y = basePosition.current[1] + driftY;
+meshRef.current.position.z = basePosition.current[2];
 
         // Jeśli chmura jest za linią clipu → natychmiast niewidoczna
         if (materialRef.current) {

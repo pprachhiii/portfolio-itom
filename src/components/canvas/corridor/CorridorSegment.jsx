@@ -28,13 +28,14 @@ const DOOR_Z_SPAN = 4;
 // Angle of the wall relative to the corridor axis
 const WALL_ANGLE = Math.atan2(WALL_X_OUTER - WALL_X_INNER, DOOR_Z_SPAN);
 
-
 const CorridorSegment = ({
     segmentIndex = 0,
     onDoorEnter,
-    hideSegmentDoors = false, // Hide only SegmentDoors while keeping content preloaded
-    zClip = 100000, // Clipping plane (render everything with Z < zClip)
-    setCameraOverride // Function to take over camera control
+    hideSegmentDoors = false,
+    zClip = 100000,
+    setCameraOverride,
+    autoTriggerGallery = false,
+    onGalleryAutoTriggerHandled
 }) => {
 
     // Calculate Z offset based on segment index
@@ -141,26 +142,45 @@ const CorridorSegment = ({
 
             {/* === DOOR SECTIONS (wall + door + label as one unit) === */}
             {/* Hidden during entrance animation for segment -1 */}
-            {!hideSegmentDoors && doors.map((door) => (
-                <DoorSection
-                    key={door.id}
-                    position={[
-                        door.x,
-                        0,
-                        zOffset + door.relativeZ + 2
-                    ]}
-                    side={door.side}
-                    label={door.label}
-                    roomId={door.roomId}
-                    icon={door.icon}
-                    color={door.color}
-                    enterDistance={door.enterDistance}
-                    onEnter={() => onDoorEnter?.(door.roomId)}
-                    setCameraOverride={setCameraOverride}
-                    segmentIndex={segmentIndex}
-                />
-            ))}
+            
+            {/* === DOOR SECTIONS (wall + door + label as one unit) === */}
+            {/* Hidden during entrance animation for segment -1 */}
+            {!hideSegmentDoors && doors.map((door) => {
+                // Keep the room identity and entry callback paired with this exact door.
+                // DoorSection uses roomId for journey-permission checks and room entry.
+                const isGalleryDoor = door.roomId === 'gallery' && segmentIndex === 0;
 
+                // The entrance auto-open is intentionally limited to the first gallery
+                // door in segment 0; other doors must never consume this callback.
+                const shouldAutoTrigger = Boolean(autoTriggerGallery && isGalleryDoor);
+
+                return (
+                    <DoorSection
+                        key={door.id}
+                        position={[
+                            door.x,
+                            0,
+                            zOffset + door.relativeZ + 2
+                        ]}
+                        side={door.side}
+                        label={door.label}
+                        roomId={door.roomId}
+                        icon={door.icon}
+                        color={door.color}
+                        enterDistance={door.enterDistance}
+                        onEnter={() => onDoorEnter?.(door.roomId)}
+                        setCameraOverride={setCameraOverride}
+                        segmentIndex={segmentIndex}
+                        autoTrigger={shouldAutoTrigger}
+                        onAutoTriggerHandled={
+                            isGalleryDoor
+                                ? onGalleryAutoTriggerHandled
+                                : undefined
+                        }
+                    />
+                );
+            })}
+            
             {/* === LIGHTING === */}
             {/* pointLight removed for optimization as it didn't affect visuals significantly */}
 

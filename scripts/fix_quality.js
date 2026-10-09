@@ -7,7 +7,7 @@ const BACKUP_DIR = './public/textures/entrance/backups';
 
 const FILES_TO_FIX = [
   'wall_bricks_2.webp',
-  'sign.webp',
+  'sign.png',
   'pot_with_duck.webp',
   'tree_sketch.webp'
 ];

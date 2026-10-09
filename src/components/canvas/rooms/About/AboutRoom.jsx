@@ -199,6 +199,7 @@ const AboutRoom = ({ showRoom, onReady, isExiting, isWarmup }) => {
     useEffect(() => {
         const handleWheel = (e) => {
             if (overlayRef.current) return; // BLOCK SCROLL IF OVERLAY IS OPEN
+            if (e.target?.closest?.('[data-profile-form="true"]')) return; // Let profile inputs receive wheel/selection without flying
             scrollVelocity.current += e.deltaY * 0.002;
         };
 
@@ -217,6 +218,7 @@ const AboutRoom = ({ showRoom, onReady, isExiting, isWarmup }) => {
 
         const handleTouchMove = (e) => {
             if (overlayRef.current) return; // BLOCK SCROLL IF OVERLAY IS OPEN
+            if (e.target?.closest?.('[data-profile-form="true"]')) return; // Let profile inputs receive wheel/selection without flying
             if (e.touches.length === 1) {
                 const deltaY = lastTouchY.current - e.touches[0].clientY;
                 lastTouchY.current = e.touches[0].clientY;
